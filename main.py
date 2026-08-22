@@ -14,7 +14,7 @@ if response.status_code == 200:
     print("\nThanks for using GitHub Profile Finder!\n")
 
     print("\n GitHub Profile")
-    print("-----------------")
+    print("====================")
     print("Username:", data["login"])
     print("Name:", data["name"] if data["name"] else "Not Available")
     print("Public repositories:", data["public_repos"])
