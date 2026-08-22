@@ -11,6 +11,8 @@ print(f"Status Code: {response.status_code}")
 if response.status_code == 200:
     data = response.json()
 
+    print("\nThanks for using GitHub Profile Finder!\n")
+
     print("\n GitHub Profile")
     print("-----------------")
     print("Username:", data["login"])
