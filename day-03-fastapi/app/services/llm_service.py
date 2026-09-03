@@ -1,7 +1,13 @@
 import os
+import logging
 
 from dotenv import load_dotenv
 from google import genai
+from models import JobAnalysis, QuestionsResponse
+
+logging.basicConfig(level=logging.INFO)
+
+logger = logging.getLogger(__name__)
 
 load_dotenv()
 
@@ -13,42 +19,80 @@ client = genai.Client(api_key=api_key)
 def analyze_job_description(job_description: str):
 
     prompt = f"""
-Analyze the following job description.
+        You are an AI job skills analyzer.
 
-Extract:
-1. Required technical skills
-2. Nice-to-have skills
-3. Expected experience level
+        Analyze the following job description.
 
-Return the result in exactly this format:
+        Extract:
+        1. Required technical skills
+        2. Nice-to-have technical skills
+        3. Expected experience level
 
-Required Skills:
-- skill 1
-- skill 2
+        Use only information supported by the job description.
+        Do not invent, assume, or add skills or experience requirements
+        that are not present in the provided text.
 
-Nice to Have:
-- skill 1
-- skill 2
+        Job Description:
+        {job_description}
+        """
 
-Experience Level:
-- Junior/Mid-level/Senior
+    try:
+
+        logger.info("Calling Gemini for job analysis")
+
+        response = client.models.generate_content(
+            model="gemini-3.6-flash",
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": JobAnalysis,
+            },
+        )
+
+        logger.info("Gemini response received for job analysis")
+
+        return JobAnalysis.model_validate_json(response.text)   
+
+    except Exception as e:
+        logger.exception("Gemini request failed during job analysis")
+        raise RuntimeError("Failed to analyze job description") from e
+    
+def generate_interview_questions(
+    job_description: str,
+    number_of_questions: int
+):
+
+    prompt = f"""
+You are an AI technical interview question generator.
+
+Analyze the following job description and generate
+{number_of_questions} technical interview questions
+that are relevant to the skills and requirements mentioned.
+
+Use only information supported by the job description.
+Do not generate questions about technologies that are
+not mentioned or reasonably supported by the job description.
 
 Job Description:
 {job_description}
 """
 
     try:
+
+        logger.info("Calling Gemini for interview questions")
+
         response = client.models.generate_content(
             model="gemini-3.6-flash",
-            contents=prompt
+            contents=prompt,
+            config={
+                "response_mime_type": "application/json",
+                "response_schema": QuestionsResponse,
+            },
         )
 
-        return {
-            "analysis": response.text
-        }
+        logger.info("Gemini response received for interview questions")
+        return QuestionsResponse.model_validate_json(response.text)
 
     except Exception as e:
-        return {
-            "error": "Failed to analyze job description",
-            "details": str(e)
-        }
+        logger.exception("Gemini request failed while generating interview questions")
+        raise RuntimeError("Failed to analyze job description") from e
