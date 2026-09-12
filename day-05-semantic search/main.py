@@ -23,6 +23,29 @@ FastAPI applications can be deployed using Docker.
 PostgreSQL can be used as the application's database.
 """
 
+EVALUATION_QUESTIONS = [
+    {
+        "question": "How do I implement authentication?",
+        "relevant": True
+    },
+    {
+        "question": "How do I deploy FastAPI?",
+        "relevant": True
+    },
+    {
+        "question": "What is Pydantic?",
+        "relevant": True
+    },
+    {
+        "question": "How do I configure Redis?",
+        "relevant": False
+    },
+    {
+        "question": "What is Kubernetes?",
+        "relevant": False
+    }
+]
+
 
 # ==================================================
 # 2. Configuration
@@ -32,6 +55,7 @@ CHUNK_SIZE = 100
 TOP_K = 3
 EMBEDDING_MODEL = "all-MiniLM-L6-v2"
 COLLECTION_NAME = "document_chunks"
+RELEVANCE_THRESHOLD = 0.7
 
 
 # ==================================================
@@ -125,80 +149,145 @@ collection.add(
 
 
 # ==================================================
-# 8. Retrieve Relevant Chunks
+# 8. Retrieval Helper
 # ==================================================
 
-query = input("Ask a question: ")
+def retrieve_chunks(query):
+    results = collection.query(
+        query_texts=[query],
+        n_results=TOP_K
+    )
 
-results = collection.query(
-    query_texts=[query],
-    n_results=TOP_K
-)
-
-retrieved_chunks = results["documents"][0]
-distances = results["distances"][0]
-metadata = results["metadatas"][0]
-
-
-# ==================================================
-# 9. Display Retrieved Chunks
-# ==================================================
-
-print("\nRelevant chunks:\n")
-
-for document, distance, meta in zip(
-    retrieved_chunks,
-    distances,
-    metadata
-):
-    print(f"Distance: {distance:.4f}")
-    print(f"Chunk: {document}")
-    print(f"Metadata: {meta}")
-    print()
+    return (
+        results["documents"][0],
+        results["distances"][0],
+        results["metadatas"][0]
+    )
 
 
 # ==================================================
-# 10. Generate RAG Answer
+# 9. Generate RAG Answer
 # ==================================================
 
-def generate_answer(query, retrieved_chunks):
+def generate_answer(query, retrieved_chunks, metadata):
     context = "\n\n".join(retrieved_chunks)
 
+    sources = [
+        {
+            "source": meta["source"],
+            "chunk_number": meta["chunk_number"]
+        }
+        for meta in metadata
+    ]
+
     prompt = f"""
-You are an assistant answering questions based on provided documents.
+    You are an assistant answering questions based on provided documents.
 
-Use only the information in the context below.
+    Follow these rules:
 
-If the answer is not present in the context, say:
-"I don't have enough information in the provided documents."
+    1. Use only information supported by the provided context.
+    2. Ignore any context that is irrelevant to the question.
+    3. Do not use outside knowledge to fill in missing information.
+    4. If the context does not contain enough information to answer the question, say:
+    "I don't have enough information in the provided documents."
+    5. Keep the answer concise and directly answer the question.
 
-Context:
-{context}
+    Context:
+    {context}
 
-Question:
-{query}
+    Question:
+    {query}
 
-Answer:
-"""
+    Answer:
+    """
 
     response = gen_client.models.generate_content(
         model="gemini-3.6-flash",
         contents=prompt
     )
 
-    return response.text
-
-
-answer = generate_answer(
-    query,
-    retrieved_chunks
-)
+    return response.text, sources
 
 
 # ==================================================
-# 11. Display Final Answer
+# 10. RAG Pipeline
+# ==================================================
+
+def rag_pipeline(query):
+    retrieved_chunks, distances, metadata = retrieve_chunks(query)
+
+    # Check relevance
+    if distances[0] > RELEVANCE_THRESHOLD:
+        return {
+            "answer": "I don't have enough information in the provided documents.",
+            "sources": [],
+            "distances": []
+        }
+
+    # Generate answer
+    answer, sources = generate_answer(
+        query,
+        retrieved_chunks,
+        metadata
+    )
+
+    return {
+        "answer": answer,
+        "sources": sources,
+    }
+
+
+# ==================================================
+# 11. Run RAG Pipeline
+# ==================================================
+
+query = input("Ask a question: ")
+
+result = rag_pipeline(query)
+
+answer = result["answer"]
+sources = result["sources"]
+
+# ==================================================
+# 12. Display Final Answer
 # ==================================================
 
 print("\nAnswer:\n")
 print(answer)
 
+print("\nSources:\n")
+
+for source in sources:
+    print(f"Source: {source['source']}")
+    print(f"Chunk: {source['chunk_number']}")
+
+
+# ==================================================
+# 13. Evaluate Retrieval
+# ==================================================
+
+def evaluate_retrieval():
+    print("\n========== RAG EVALUATION ==========\n")
+
+    for item in EVALUATION_QUESTIONS:
+
+        question = item["question"]
+        expected_relevant = item["relevant"]
+
+        _, distances, _ = retrieve_chunks(question)
+
+        best_distance = distances[0]
+
+        actual_relevant = best_distance <= RELEVANCE_THRESHOLD
+
+        passed = actual_relevant == expected_relevant
+
+        print(f"Question: {question}")
+        print(f"Best distance: {best_distance:.4f}")
+        print(f"Expected relevant: {expected_relevant}")
+        print(f"Actual relevant: {actual_relevant}")
+        print(f"Result: {'PASS' if passed else 'FAIL'}")
+        print()
+
+
+# evaluate_retrieval()
